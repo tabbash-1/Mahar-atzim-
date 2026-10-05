@@ -1,4 +1,5 @@
-// FlowICT production gate: validates the currently live production before promotion.\nconst BASE = process.env.FLOWICT_VERIFY_URL || 'https://flowict.vercel.app';
+// FlowICT production gate: validates the currently live production before promotion.
+const BASE = process.env.FLOWICT_VERIFY_URL || 'https://flowict.vercel.app';
 
 const checks = [
   { name: 'kline', code: 21, path: '/v5/market/kline?category=linear&symbol=BTCUSDT&interval=60&limit=5' },
