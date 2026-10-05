@@ -31,7 +31,7 @@ try {
       fail(check.code, check.name + ' fetch error: ' + error.message);
     }
     const body = await response.text();
-    if (!response.ok) fail(check.code, check.name + ' HTTP ' + response.status + ': ' + body.slice(0, 160));
+    if (!response.ok) fail(check.name === 'kline' ? (100 + (response.status % 100)) : check.code, check.name + ' HTTP ' + response.status + ': ' + body.slice(0, 160));
     let data;
     try { data = JSON.parse(body); } catch { fail(check.code + 10, check.name + ' returned non-JSON'); }
     if (data.retCode !== 0) fail(check.code + 20, check.name + ' retCode=' + data.retCode);
