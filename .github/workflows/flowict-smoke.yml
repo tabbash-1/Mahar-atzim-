@@ -9,7 +9,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Check live site
         shell: bash
@@ -21,41 +21,54 @@ jobs:
           test "$code" = "200"
           grep -q "FlowICT" /tmp/site.html
           grep -q "حلّل الآن" /tmp/site.html
+          grep -q "const API='/api/bybit?path=';" /tmp/site.html
           echo "SITE_OK=1"
 
-      - name: Check Bybit endpoints
+      - name: Check FlowICT market proxy
         shell: bash
         run: |
           set -euo pipefail
-          base='https://api.bybit.com'
-          urls=(
+          base='https://flowict.vercel.app/api/bybit'
+          paths=(
             '/v5/market/kline?category=linear&symbol=BTCUSDT&interval=60&limit=5'
             '/v5/market/recent-trade?category=linear&symbol=BTCUSDT&limit=5'
             '/v5/market/open-interest?category=linear&symbol=BTCUSDT&intervalTime=1h&limit=5'
             '/v5/market/funding/history?category=linear&symbol=BTCUSDT&limit=3'
           )
-          for p in "${urls[@]}"; do
+          for p in "${paths[@]}"; do
             echo "=== $p ==="
-            body=$(curl -fsS "$base$p")
-            echo "$body" | head -c 300
+            body=$(curl -fsS -G --data-urlencode "path=$p" "$base")
+            echo "$body" | head -c 350
             echo
             echo "$body" | grep -q '"retCode":0'
           done
-          echo "BYBIT_OK=1"
+          echo "PROXY_OK=1"
 
-      - name: Check browser CORS from FlowICT origin
+      - name: Check proxy allowlist
         shell: bash
         run: |
           set -euo pipefail
-          url='https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=60&limit=1'
-          curl -sS -D /tmp/headers -o /tmp/body -H 'Origin: https://flowict.vercel.app' "$url"
-          echo "=== RESPONSE HEADERS ==="
-          cat /tmp/headers
-          echo "=== CORS ==="
-          if grep -qi '^access-control-allow-origin:' /tmp/headers; then
-            grep -i '^access-control-allow-origin:' /tmp/headers
-            echo 'CORS_HEADER_PRESENT=1'
-          else
-            echo 'CORS_HEADER_PRESENT=0'
-            exit 22
+          code=$(curl -sS -o /tmp/blocked.json -w "%{http_code}" -G --data-urlencode "path=/v5/account/wallet-balance" https://flowict.vercel.app/api/bybit)
+          echo "BLOCK_STATUS=$code"
+          cat /tmp/blocked.json
+          test "$code" = "403"
+          echo "ALLOWLIST_OK=1"
+
+      - name: Run production page in headless Chrome
+        shell: bash
+        run: |
+          set -euo pipefail
+          chrome=$(command -v google-chrome || command -v chromium-browser || command -v chromium)
+          echo "CHROME=$chrome"
+          "$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=18000 --dump-dom https://flowict.vercel.app/ > /tmp/dom.html
+          grep -q "تم التحديث" /tmp/dom.html
+          if grep -q "فشل الاتصال بمصدر البيانات" /tmp/dom.html; then
+            echo "FLOWICT_BROWSER_FAILED=1"
+            grep -o "تعذر جلب البيانات[^<]*" /tmp/dom.html || true
+            exit 1
           fi
+          grep -q "Long score" /tmp/dom.html
+          grep -Eq 'class="pill (long|short|wait)"' /tmp/dom.html
+          echo "BROWSER_ANALYSIS_OK=1"
+          grep -o "تم التحديث[^<]*" /tmp/dom.html | head -1 || true
+          grep -o "Long score[^<]*" /tmp/dom.html | head -1 || true
