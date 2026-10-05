@@ -1,0 +1,63 @@
+name: FlowICT Windows E2E
+on:
+  push:
+    paths:
+      - '.github/workflows/flowict-windows-e2e.yml'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check live site and proxy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $site = Invoke-WebRequest -UseBasicParsing 'https://flowict.vercel.app/'
+          if ($site.StatusCode -ne 200) { throw "Site HTTP $($site.StatusCode)" }
+          if (-not $site.Content.Contains('FlowICT')) { throw 'Missing FlowICT' }
+          if (-not $site.Content.Contains("const API='/api/bybit?path=';")) { throw 'Proxy frontend not deployed' }
+          Write-Host 'SITE_OK=1'
+
+          $paths = @(
+            '/v5/market/kline?category=linear&symbol=BTCUSDT&interval=60&limit=5',
+            '/v5/market/recent-trade?category=linear&symbol=BTCUSDT&limit=5',
+            '/v5/market/open-interest?category=linear&symbol=BTCUSDT&intervalTime=1h&limit=5',
+            '/v5/market/funding/history?category=linear&symbol=BTCUSDT&limit=3'
+          )
+          foreach ($p in $paths) {
+            $encoded = [uri]::EscapeDataString($p)
+            $data = Invoke-RestMethod "https://flowict.vercel.app/api/bybit?path=$encoded"
+            if ($data.retCode -ne 0) { throw "Proxy failed for $p retCode=$($data.retCode)" }
+            Write-Host "OK $p"
+          }
+          Write-Host 'PROXY_OK=1'
+
+      - name: Verify proxy blocks private API
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $p = [uri]::EscapeDataString('/v5/account/wallet-balance')
+          try {
+            Invoke-WebRequest -UseBasicParsing "https://flowict.vercel.app/api/bybit?path=$p"
+            throw 'Private endpoint was not blocked'
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 403) { throw }
+          }
+          Write-Host 'ALLOWLIST_OK=1'
+
+      - name: Run live analysis in Edge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+          if (-not (Test-Path $edge)) { $edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe' }
+          if (-not (Test-Path $edge)) { throw 'Edge not found' }
+          $dom = & $edge --headless=new --disable-gpu --no-first-run --virtual-time-budget=20000 --dump-dom 'https://flowict.vercel.app/' 2>$null
+          $text = $dom -join [Environment]::NewLine
+          if (-not $text.Contains('تم التحديث')) { throw 'Analysis did not reach updated state' }
+          if ($text.Contains('فشل الاتصال بمصدر البيانات')) { throw 'Market data connection failed in browser' }
+          if (-not $text.Contains('Long score')) { throw 'Analysis score missing' }
+          if (($text -notmatch 'pill long') -and ($text -notmatch 'pill short') -and ($text -notmatch 'pill wait')) { throw 'Decision pill missing' }
+          Write-Host 'BROWSER_ANALYSIS_OK=1'
