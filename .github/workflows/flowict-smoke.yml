@@ -1,0 +1,61 @@
+name: FlowICT Smoke Test
+on:
+  push:
+    paths:
+      - '.github/workflows/flowict-smoke.yml'
+      - 'flowict/**'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check live site
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== LIVE SITE ==="
+          code=$(curl -L -sS -o /tmp/site.html -w "%{http_code}" https://flowict.vercel.app/)
+          echo "HTTP=$code"
+          test "$code" = "200"
+          grep -q "FlowICT" /tmp/site.html
+          grep -q "حلّل الآن" /tmp/site.html
+          echo "SITE_OK=1"
+
+      - name: Check Bybit endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://api.bybit.com'
+          urls=(
+            '/v5/market/kline?category=linear&symbol=BTCUSDT&interval=60&limit=5'
+            '/v5/market/recent-trade?category=linear&symbol=BTCUSDT&limit=5'
+            '/v5/market/open-interest?category=linear&symbol=BTCUSDT&intervalTime=1h&limit=5'
+            '/v5/market/funding/history?category=linear&symbol=BTCUSDT&limit=3'
+          )
+          for p in "${urls[@]}"; do
+            echo "=== $p ==="
+            body=$(curl -fsS "$base$p")
+            echo "$body" | head -c 300
+            echo
+            echo "$body" | grep -q '"retCode":0'
+          done
+          echo "BYBIT_OK=1"
+
+      - name: Check browser CORS from FlowICT origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=60&limit=1'
+          curl -sS -D /tmp/headers -o /tmp/body -H 'Origin: https://flowict.vercel.app' "$url"
+          echo "=== RESPONSE HEADERS ==="
+          cat /tmp/headers
+          echo "=== CORS ==="
+          if grep -qi '^access-control-allow-origin:' /tmp/headers; then
+            grep -i '^access-control-allow-origin:' /tmp/headers
+            echo 'CORS_HEADER_PRESENT=1'
+          else
+            echo 'CORS_HEADER_PRESENT=0'
+            exit 22
+          fi
