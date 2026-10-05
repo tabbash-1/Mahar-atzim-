@@ -12,5 +12,6 @@
       "maxDuration": 10
     }
   },
-  "buildCommand": "node verify-deploy.mjs"
+  "buildCommand": "node verify-deploy.mjs",
+  "outputDirectory": "."
 }
