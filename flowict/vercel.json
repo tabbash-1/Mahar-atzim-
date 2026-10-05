@@ -5,12 +5,11 @@
     "fra1"
   ],
   "functions": {
-    "api/bybit.js": {
+    "api/bybit.mjs": {
       "regions": [
         "fra1"
       ],
       "maxDuration": 10
     }
-  },
-  "buildCommand": "node verify-deploy.mjs"
+  }
 }
