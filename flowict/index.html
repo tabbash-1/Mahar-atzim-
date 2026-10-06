@@ -81,10 +81,10 @@
 
       <section class="card">
         <h3>Order Flow</h3>
-        <div class="signal"><span>Delta</span><b id="delta">—</b></div>
+        <div class="signal"><span>Micro Delta</span><b id="delta">—</b></div>
         <div class="signal"><span>Buy / Sell</span><b id="buySell">—</b></div>
-        <div class="signal"><span>CVD impulse</span><b id="cvd">—</b></div>
-        <div class="signal"><span>Absorption</span><b id="absorption">—</b></div>
+        <div class="signal"><span>Micro CVD</span><b id="cvd">—</b></div>
+        <div class="signal"><span>امتصاص محتمل</span><b id="absorption">—</b></div>
       </section>
 
       <section class="card">
@@ -162,42 +162,65 @@
     } return best;
   }
   function mss(cs){
-    const base=cs.slice(0,-1), p=pivots(base.slice(-120)); const last=cs.at(-1),prev=cs.at(-2); const a=atr(cs), body=Math.abs(last.c-last.o); let out=null;
-    const sh=p.highs.at(-1), sl=p.lows.at(-1);
-    if(sh && last.c>sh.p && prev.c<=sh.p) out={dir:'BULLISH',level:sh.p,displacement:Number.isFinite(a)&&body>a*.65};
-    if(sl && last.c<sl.p && prev.c>=sl.p) out={dir:'BEARISH',level:sl.p,displacement:Number.isFinite(a)&&body>a*.65};
+    let out=null; const from=Math.max(2,cs.length-5);
+    for(let i=from;i<cs.length;i++){
+      const hist=cs.slice(0,i), p=pivots(hist.slice(-120)), last=cs[i],prev=cs[i-1], a=atr(cs.slice(0,i+1)),body=Math.abs(last.c-last.o);
+      const sh=p.highs.at(-1),sl=p.lows.at(-1);
+      if(sh && last.c>sh.p && prev.c<=sh.p) out={dir:'BULLISH',level:sh.p,displacement:Number.isFinite(a)&&body>a*.65,t:last.t};
+      if(sl && last.c<sl.p && prev.c>=sl.p) out={dir:'BEARISH',level:sl.p,displacement:Number.isFinite(a)&&body>a*.65,t:last.t};
+    }
     return out;
   }
   function latestFvg(cs){
-    let out=null; for(let i=Math.max(2,cs.length-45);i<cs.length;i++){
-      const a=cs[i-2],c=cs[i]; if(a.h<c.l) out={dir:'BULLISH',low:a.h,high:c.l,t:c.t}; if(a.l>c.h) out={dir:'BEARISH',low:c.h,high:a.l,t:c.t};
-    } return out;
+    let out=null;
+    for(let i=Math.max(2,cs.length-60);i<cs.length;i++){
+      const a=cs[i-2],c=cs[i];
+      if(a.h<c.l){
+        const low=a.h,high=c.l,filled=cs.slice(i+1).some(x=>x.l<=low);
+        if(!filled) out={dir:'BULLISH',low,high,t:c.t};
+      }
+      if(a.l>c.h){
+        const low=c.h,high=a.l,filled=cs.slice(i+1).some(x=>x.h>=high);
+        if(!filled) out={dir:'BEARISH',low,high,t:c.t};
+      }
+    }
+    return out;
   }
   function orderFlow(ts){
-    let buy=0,sell=0,cvd=0,mid=0; if(!ts.length)return {buy:0,sell:0,deltaPct:0,cvdImpulse:0,abs:'NONE'};
-    ts.forEach((x,i)=>{const q=x.q*x.p;const s=x.side==='Buy'?q:-q; if(s>0)buy+=s;else sell+=-s;cvd+=s;if(i===Math.floor(ts.length/2))mid=cvd});
+    let buy=0,sell=0,cvd=0,mid=0;
+    if(!ts.length)return {buy:0,sell:0,deltaPct:0,cvdImpulse:0,abs:'NONE',spanSec:0,priceChangePct:0,valid:false};
+    ts.forEach((x,i)=>{const q=x.q*x.p;const s=x.side==='Buy'?q:-q;if(s>0)buy+=s;else sell+=-s;cvd+=s;if(i===Math.floor(ts.length/2))mid=cvd});
     const total=buy+sell,deltaPct=total?(buy-sell)/total*100:0,cvdImpulse=total?(cvd-mid)/total*100:0;
-    const n=Math.max(20,Math.floor(ts.length*.2)), first=ts.slice(0,n),last=ts.slice(-n), p0=first.reduce((a,x)=>a+x.p,0)/first.length,p1=last.reduce((a,x)=>a+x.p,0)/last.length;
-    let abs='NONE'; if(deltaPct<-7 && p1>=p0*.999)abs='BULLISH'; if(deltaPct>7 && p1<=p0*1.001)abs='BEARISH';
-    return {buy,sell,deltaPct,cvdImpulse,abs};
+    const n=Math.max(20,Math.floor(ts.length*.2)),first=ts.slice(0,n),last=ts.slice(-n),p0=first.reduce((a,x)=>a+x.p,0)/first.length,p1=last.reduce((a,x)=>a+x.p,0)/last.length;
+    const spanSec=Math.max(0,(ts.at(-1).t-ts[0].t)/1000),priceChangePct=p0?(p1-p0)/p0*100:0,valid=spanSec>=60&&spanSec<=14400;
+    let abs='NONE';
+    if(valid && Math.abs(priceChangePct)<=.03 && deltaPct<=-20)abs='BULLISH';
+    if(valid && Math.abs(priceChangePct)<=.03 && deltaPct>=20)abs='BEARISH';
+    return {buy,sell,deltaPct,cvdImpulse,abs,spanSec,priceChangePct,valid};
   }
   function oiInfo(xs){if(xs.length<2)return {pct:NaN,last:NaN};const a=xs[0].v,b=xs.at(-1).v;return {pct:a?(b-a)/a*100:NaN,last:b}}
   function scoreAll(ctx){
     let L=0,S=0; const reasons=[]; const add=(dir,n,text)=>{if(dir==='LONG')L+=n;else S+=n;reasons.push({dir,text})};
-    if(ctx.t4.dir==='BULLISH')add('LONG',2,'اتجاه 4H صاعد'); if(ctx.t4.dir==='BEARISH')add('SHORT',2,'اتجاه 4H هابط');
-    if(ctx.t1.dir==='BULLISH')add('LONG',2,'اتجاه 1H صاعد'); if(ctx.t1.dir==='BEARISH')add('SHORT',2,'اتجاه 1H هابط');
+    if(ctx.t4.dir==='BULLISH')add('LONG',2,'اتجاه 4H صاعد على شموع مغلقة'); if(ctx.t4.dir==='BEARISH')add('SHORT',2,'اتجاه 4H هابط على شموع مغلقة');
+    if(ctx.t1.dir==='BULLISH')add('LONG',2,'اتجاه 1H صاعد على شموع مغلقة'); if(ctx.t1.dir==='BEARISH')add('SHORT',2,'اتجاه 1H هابط على شموع مغلقة');
     if(ctx.sw?.dir==='BULLISH')add('LONG',2,'تم أخذ سيولة أسفل قاع ثم استرجاعها'); if(ctx.sw?.dir==='BEARISH')add('SHORT',2,'تم أخذ سيولة أعلى قمة ثم رفضها');
-    if(ctx.ms?.dir==='BULLISH')add('LONG',ctx.ms.displacement?2:1,'كسر هيكل صاعد'+(ctx.ms.displacement?' مع displacement':'')); if(ctx.ms?.dir==='BEARISH')add('SHORT',ctx.ms.displacement?2:1,'كسر هيكل هابط'+(ctx.ms.displacement?' مع displacement':''));
-    if(ctx.fv?.dir==='BULLISH')add('LONG',1,'آخر FVG صاعد'); if(ctx.fv?.dir==='BEARISH')add('SHORT',1,'آخر FVG هابط');
-    if(ctx.of.deltaPct>5)add('LONG',2,`Delta شرائي ${pct(ctx.of.deltaPct)}`); if(ctx.of.deltaPct<-5)add('SHORT',2,`Delta بيعي ${pct(ctx.of.deltaPct)}`);
-    if(ctx.of.cvdImpulse>2)add('LONG',1,'CVD يميل للشراء في النصف الأحدث'); if(ctx.of.cvdImpulse<-2)add('SHORT',1,'CVD يميل للبيع في النصف الأحدث');
-    if(ctx.of.abs==='BULLISH')add('LONG',1,'امتصاص بيع محتمل'); if(ctx.of.abs==='BEARISH')add('SHORT',1,'امتصاص شراء محتمل');
+    if(ctx.ms?.dir==='BULLISH')add('LONG',ctx.ms.displacement?3:2,'كسر هيكل صاعد'+(ctx.ms.displacement?' مع displacement':'')); if(ctx.ms?.dir==='BEARISH')add('SHORT',ctx.ms.displacement?3:2,'كسر هيكل هابط'+(ctx.ms.displacement?' مع displacement':''));
+    if(ctx.fv?.dir==='BULLISH')add('LONG',1,'FVG صاعد ما زال غير ممتلئ بالكامل'); if(ctx.fv?.dir==='BEARISH')add('SHORT',1,'FVG هابط ما زال غير ممتلئ بالكامل');
+    if(ctx.of.valid && ctx.of.deltaPct>8)add('LONG',1,`Micro Delta شرائي ${pct(ctx.of.deltaPct)}`); if(ctx.of.valid && ctx.of.deltaPct<-8)add('SHORT',1,`Micro Delta بيعي ${pct(ctx.of.deltaPct)}`);
+    if(ctx.of.valid && ctx.of.cvdImpulse>4)add('LONG',1,'Micro CVD يؤكد الشراء'); if(ctx.of.valid && ctx.of.cvdImpulse<-4)add('SHORT',1,'Micro CVD يؤكد البيع');
+    if(ctx.of.abs==='BULLISH')add('LONG',1,'امتصاص بيع محتمل في التنفيذ القصير'); if(ctx.of.abs==='BEARISH')add('SHORT',1,'امتصاص شراء محتمل في التنفيذ القصير');
     if(Number.isFinite(ctx.oi.pct)&&ctx.oi.pct>0.4){if(ctx.t1.dir==='BULLISH')add('LONG',1,'OI يتوسع مع الميل الصاعد');if(ctx.t1.dir==='BEARISH')add('SHORT',1,'OI يتوسع مع الميل الهابط')}
     if(ctx.funding>0.05){L-=1;reasons.push({dir:'WARN',text:'Funding موجب مرتفع نسبيًا: ازدحام محتمل في الـLong'})}
     if(ctx.funding<-0.05){S-=1;reasons.push({dir:'WARN',text:'Funding سالب مرتفع نسبيًا: ازدحام محتمل في الـShort'})}
-    const diff=L-S,top=Math.max(L,S),direction=top>=7&&Math.abs(diff)>=3?(L>S?'LONG':'SHORT'):'WAIT';
-    const agreement=Math.max(0,Math.min(95,Math.round(50+top*3+Math.abs(diff)*2-(direction==='WAIT'?10:0))));
-    return {L,S,direction,agreement,reasons};
+    const longTrigger=ctx.t4.dir==='BULLISH'&&ctx.t1.dir!=='BEARISH'&&(ctx.sw?.dir==='BULLISH'||ctx.ms?.dir==='BULLISH');
+    const shortTrigger=ctx.t4.dir==='BEARISH'&&ctx.t1.dir!=='BULLISH'&&(ctx.sw?.dir==='BEARISH'||ctx.ms?.dir==='BEARISH');
+    const diff=L-S,top=Math.max(L,S);
+    let direction='WAIT';
+    if(longTrigger&&L>=6&&diff>=3)direction='LONG';
+    if(shortTrigger&&S>=6&&-diff>=3)direction='SHORT';
+    if(direction==='WAIT'&&!longTrigger&&!shortTrigger)reasons.push({dir:'WARN',text:'لا يوجد Liquidity Sweep أو MSS مؤكد على شمعة مغلقة؛ لا يوجد Trigger للدخول بعد'});
+    const agreement=Math.max(0,Math.min(90,Math.round(45+top*4+Math.abs(diff)*2-(direction==='WAIT'?12:0))));
+    return {L,S,direction,agreement,reasons,longTrigger,shortTrigger};
   }
   function plan(direction,cs,sw,fv){
     if(direction==='WAIT')return null; const price=cs.at(-1).c,a=atr(cs),p=pivots(cs.slice(-120)); if(!Number.isFinite(a)||!a)return null; let entry=price,sl,tp1,tp2;
@@ -230,10 +253,10 @@
     $('sweep').textContent=ctx.sw?`${ctx.sw.dir} @ ${fmt(ctx.sw.level,d)}`:'NONE';setClass($('sweep'),ctx.sw?.dir==='BULLISH'?'good':ctx.sw?.dir==='BEARISH'?'bad':'neutral');
     $('mss').textContent=ctx.ms?`${ctx.ms.dir}${ctx.ms.displacement?' + DISP':''}`:'NONE';setClass($('mss'),ctx.ms?.dir==='BULLISH'?'good':ctx.ms?.dir==='BEARISH'?'bad':'neutral');
     $('fvg').textContent=ctx.fv?`${ctx.fv.dir} ${fmt(ctx.fv.low,d)}–${fmt(ctx.fv.high,d)}`:'NONE';setClass($('fvg'),ctx.fv?.dir==='BULLISH'?'good':ctx.fv?.dir==='BEARISH'?'bad':'neutral');
-    $('delta').textContent=pct(ctx.of.deltaPct);setClass($('delta'),ctx.of.deltaPct>5?'good':ctx.of.deltaPct<-5?'bad':'neutral');$('buySell').textContent=`${fmt(ctx.of.buy/1e6,2)}M / ${fmt(ctx.of.sell/1e6,2)}M`;setClass($('buySell'),'blue');$('cvd').textContent=pct(ctx.of.cvdImpulse);setClass($('cvd'),ctx.of.cvdImpulse>2?'good':ctx.of.cvdImpulse<-2?'bad':'neutral');$('absorption').textContent=ctx.of.abs;setClass($('absorption'),ctx.of.abs==='BULLISH'?'good':ctx.of.abs==='BEARISH'?'bad':'neutral');
+    $('delta').textContent=`${pct(ctx.of.deltaPct)} • ${Math.round(ctx.of.spanSec)}s`;setClass($('delta'),ctx.of.valid&&ctx.of.deltaPct>8?'good':ctx.of.valid&&ctx.of.deltaPct<-8?'bad':'neutral');$('buySell').textContent=`${fmt(ctx.of.buy/1e6,2)}M / ${fmt(ctx.of.sell/1e6,2)}M`;setClass($('buySell'),'blue');$('cvd').textContent=pct(ctx.of.cvdImpulse);setClass($('cvd'),ctx.of.valid&&ctx.of.cvdImpulse>4?'good':ctx.of.valid&&ctx.of.cvdImpulse<-4?'bad':'neutral');$('absorption').textContent=ctx.of.abs;setClass($('absorption'),ctx.of.abs==='BULLISH'?'good':ctx.of.abs==='BEARISH'?'bad':'neutral');
     $('oi').textContent=`${pct(ctx.oi.pct)} (${fmt(ctx.oi.last/1e6,2)}M)`;setClass($('oi'),Math.abs(ctx.oi.pct)>0.4?'blue':'neutral');$('funding').textContent=pct(ctx.funding);setClass($('funding'),Math.abs(ctx.funding)>0.05?'neutral':'blue');$('price').textContent=fmt(ctx.price,d);setClass($('price'),'blue');
     const topReasons=res.reasons.filter(x=>x.dir===res.direction||(res.direction==='WAIT'&&x.dir!=='WARN')).slice(0,6);const warns=res.reasons.filter(x=>x.dir==='WARN').slice(0,2);const list=[...topReasons,...warns];$('reasons').innerHTML=(list.length?list:[{text:'الإشارات الحالية متعارضة؛ لا توجد أفضلية واضحة.'}]).map(x=>`<div class="reason"><i>${x.dir==='WARN'?'⚠':'•'}</i><span>${escapeHtml(x.text)}</span></div>`).join('');
-    $('status').textContent=`تم التحديث ${new Date().toLocaleTimeString('ar',{hour:'2-digit',minute:'2-digit'})} • Long score ${res.L} / Short score ${res.S}`;$('chartMeta').textContent=`آخر ${Math.min(120,currentCandles.length)} شمعة • ${tfNames[tf]}`;renderChart(currentCandles,pl);
+    $('status').textContent=`تم التحديث ${new Date().toLocaleTimeString('ar',{hour:'2-digit',minute:'2-digit'})} • Long score ${res.L} / Short score ${res.S} • ICT من شموع مغلقة`;$('chartMeta').textContent=`آخر ${Math.min(120,currentCandles.length)} شمعة • ${tfNames[tf]}`;renderChart(currentCandles,pl);
   }
   function priceDecimals(p){if(p>=1000)return 1;if(p>=100)return 2;if(p>=1)return 4;return 6}
   function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
@@ -241,9 +264,11 @@
     clearError(); const btn=$('analyze'),symbol=$('symbol').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,''),tf=$('tf').value;if(!symbol)return; localStorage.setItem('flowict.symbol',symbol);localStorage.setItem('flowict.tf',tf);btn.disabled=true;btn.textContent='جاري التحليل…';$('status').textContent='جلب الشموع وبيانات التنفيذ وOI…';
     try{
       const [cExec,c1,c4,ts,ois,fr]=await Promise.all([klines(symbol,tf,260),klines(symbol,'60',240),klines(symbol,'240',240),trades(symbol),oi(symbol,tf),funding(symbol)]);
-      if(cExec.length<80||c1.length<80||c4.length<80)throw new Error('بيانات شموع غير كافية لهذه العملة'); currentCandles=cExec;
-      const ctx={price:cExec.at(-1).c,t1:trend(c1),t4:trend(c4),sw:sweep(cExec),ms:mss(cExec),fv:latestFvg(cExec),of:orderFlow(ts),oi:oiInfo(ois),funding:fr};
-      const res=scoreAll(ctx),pl=plan(res.direction,cExec,ctx.sw,ctx.fv);paintResult(symbol,tf,ctx,res,pl);
+      if(cExec.length<80||c1.length<80||c4.length<80)throw new Error('بيانات شموع غير كافية لهذه العملة');
+      currentCandles=cExec;
+      const execClosed=cExec.slice(0,-1),oneClosed=c1.slice(0,-1),fourClosed=c4.slice(0,-1);
+      const ctx={price:cExec.at(-1).c,t1:trend(oneClosed),t4:trend(fourClosed),sw:sweep(execClosed),ms:mss(execClosed),fv:latestFvg(execClosed),of:orderFlow(ts),oi:oiInfo(ois),funding:fr};
+      const res=scoreAll(ctx),pl=plan(res.direction,execClosed,ctx.sw,ctx.fv);paintResult(symbol,tf,ctx,res,pl);
     }catch(e){showError(`تعذر جلب البيانات من Bybit: ${e.message}. جرّب إعادة التحليل أو عملة USDT Perpetual أخرى.`);$('status').textContent='فشل الاتصال بمصدر البيانات.'}
     finally{btn.disabled=false;btn.textContent='حلّل الآن'}
   }
