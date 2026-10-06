@@ -1,0 +1,15 @@
+name: FlowICT Analysis Audit
+on:
+  push:
+    paths:
+      - '.github/workflows/flowict-analysis-audit.yml'
+      - '.github/scripts/flowict-audit.mjs'
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit live BTC analysis
+        run: node .github/scripts/flowict-audit.mjs
