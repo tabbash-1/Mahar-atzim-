@@ -61,14 +61,18 @@ jobs:
           chrome=$(command -v google-chrome || command -v chromium-browser || command -v chromium)
           echo "CHROME=$chrome"
           "$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=18000 --dump-dom https://flowict.vercel.app/ > /tmp/dom.html
-          grep -q "تم التحديث" /tmp/dom.html
-          if grep -q "فشل الاتصال بمصدر البيانات" /tmp/dom.html; then
-            echo "FLOWICT_BROWSER_FAILED=1"
-            grep -o "تعذر جلب البيانات[^<]*" /tmp/dom.html || true
-            exit 1
-          fi
-          grep -q "Long score" /tmp/dom.html
-          grep -Eq 'class="pill (long|short|wait)"' /tmp/dom.html
-          echo "BROWSER_ANALYSIS_OK=1"
-          grep -o "تم التحديث[^<]*" /tmp/dom.html | head -1 || true
-          grep -o "Long score[^<]*" /tmp/dom.html | head -1 || true
+          python3 - <<'PY'
+          import re, html
+          dom=open('/tmp/dom.html',encoding='utf-8').read()
+          ids=['decision','confidence','status','trend4h','trend1h','sweep','mss','fvg','delta','buySell','cvd','absorption','oi','funding','price','entry','sl','tp1','tp2','rr']
+          vals={}
+          for i in ids:
+              m=re.search(r'id="'+re.escape(i)+r'"[^>]*>(.*?)</',dom,re.S)
+              vals[i]=html.unescape(re.sub(r'<[^>]+>','',m.group(1)).strip()) if m else ''
+              print(f'{i.upper()}={vals[i]}')
+          assert vals['status'].startswith('تم التحديث'), 'Rendered analysis did not complete: '+vals['status']
+          assert vals['decision'] in {'LONG','SHORT','WAIT'}, 'Invalid decision: '+vals['decision']
+          assert vals['trend4h'] in {'BULLISH','BEARISH','MIXED'}, 'Invalid 4H trend'
+          assert vals['trend1h'] in {'BULLISH','BEARISH','MIXED'}, 'Invalid 1H trend'
+          print('BROWSER_ANALYSIS_OK=1')
+          PY
