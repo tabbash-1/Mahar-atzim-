@@ -223,17 +223,33 @@
     return {L,S,direction,agreement,reasons,longTrigger,shortTrigger};
   }
   function plan(direction,cs,sw,fv){
-    if(direction==='WAIT')return null; const price=cs.at(-1).c,a=atr(cs),p=pivots(cs.slice(-120)); if(!Number.isFinite(a)||!a)return null; let entry=price,sl,tp1,tp2;
+    if(direction==='WAIT')return null;
+    const price=cs.at(-1).c,a=atr(cs),p=pivots(cs.slice(-120));
+    if(!Number.isFinite(a)||!a)return null;
+    let entry=price,sl,tp1,tp2;
     if(direction==='LONG'){
       if(fv?.dir==='BULLISH'){const mid=(fv.low+fv.high)/2;if(mid<price&&price-mid<a*1.2)entry=mid}
-      const structural=Math.min(p.lows.at(-1)?.p??entry-a*1.4,sw?.dir==='BULLISH'?sw.extreme:Infinity); sl=Number.isFinite(structural)?structural-a*.12:entry-a*1.5;
-      if(entry-sl<a*.55)sl=entry-a*1.15; const risk=entry-sl; const target=p.highs.filter(x=>x.p>entry).at(-1)?.p; tp1=target&&target>entry+risk*1.1?target:entry+risk*1.5; tp2=entry+risk*2.5;
+      const structural=Math.min(p.lows.at(-1)?.p??entry-a*1.4,sw?.dir==='BULLISH'?sw.extreme:Infinity);
+      sl=Number.isFinite(structural)?structural-a*.12:entry-a*1.5;
+      if(entry-sl<a*.55)sl=entry-a*1.15;
+      const risk=entry-sl;
+      tp2=entry+risk*2.5;
+      const targets=p.highs.map(x=>x.p).filter(v=>v>entry+risk*1.1&&v<tp2).sort((a,b)=>a-b);
+      tp1=targets[0]??entry+risk*1.5;
+      if(!(entry<tp1&&tp1<tp2))tp1=entry+risk*1.5;
     }else{
       if(fv?.dir==='BEARISH'){const mid=(fv.low+fv.high)/2;if(mid>price&&mid-price<a*1.2)entry=mid}
-      const structural=Math.max(p.highs.at(-1)?.p??entry+a*1.4,sw?.dir==='BEARISH'?sw.extreme:-Infinity); sl=Number.isFinite(structural)?structural+a*.12:entry+a*1.5;
-      if(sl-entry<a*.55)sl=entry+a*1.15; const risk=sl-entry; const target=p.lows.filter(x=>x.p<entry).at(-1)?.p; tp1=target&&target<entry-risk*1.1?target:entry-risk*1.5; tp2=entry-risk*2.5;
+      const structural=Math.max(p.highs.at(-1)?.p??entry+a*1.4,sw?.dir==='BEARISH'?sw.extreme:-Infinity);
+      sl=Number.isFinite(structural)?structural+a*.12:entry+a*1.5;
+      if(sl-entry<a*.55)sl=entry+a*1.15;
+      const risk=sl-entry;
+      tp2=entry-risk*2.5;
+      const targets=p.lows.map(x=>x.p).filter(v=>v<entry-risk*1.1&&v>tp2).sort((a,b)=>b-a);
+      tp1=targets[0]??entry-risk*1.5;
+      if(!(entry>tp1&&tp1>tp2))tp1=entry-risk*1.5;
     }
-    return {entry,sl,tp1,tp2,rr:2.5};
+    const risk=Math.abs(entry-sl),reward=Math.abs(tp2-entry);
+    return {entry,sl,tp1,tp2,rr:risk?reward/risk:NaN};
   }
   function renderChart(cs,plan){
     const canvas=$('chart'),ctx=canvas.getContext('2d'),dpr=Math.max(1,window.devicePixelRatio||1),rect=canvas.getBoundingClientRect();canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;ctx.scale(dpr,dpr);const W=rect.width,H=rect.height;ctx.clearRect(0,0,W,H);
